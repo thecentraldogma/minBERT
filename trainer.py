@@ -7,7 +7,7 @@ import time
 from collections import defaultdict
 import torch
 from torch.utils.data.dataloader import DataLoader
-from utils import CfgNode as CN
+from utils import CfgNode as CN, mse_loss
 
 class Trainer:
 
@@ -27,11 +27,12 @@ class Trainer:
         C.grad_norm_clip = 1.0
         return C
 
-    def __init__(self, config, model, train_dataset):
+    def __init__(self, config, model, train_dataset, test_dataset):
         self.config = config
         self.model = model
         self.optimizer = None
         self.train_dataset = train_dataset
+        self.test_dataset = test_dataset
         self.callbacks = defaultdict(list)
 
         # determine the device we'll train on
@@ -47,15 +48,8 @@ class Trainer:
         self.iter_time = 0.0
         self.iter_dt = 0.0
 
-
-    def run(self):
-        model, config = self.model, self.config
-
-        # setup the optimizer
-        self.optimizer = model.configure_optimizers(config)
-
         # setup the dataloader
-        train_loader = DataLoader(
+        self.train_loader = DataLoader(
             self.train_dataset,
             sampler=torch.utils.data.RandomSampler(self.train_dataset, replacement=True, num_samples=int(1e10)),
             shuffle=False,
@@ -64,17 +58,51 @@ class Trainer:
             num_workers=config.num_workers,
         )
 
+        self.test_loader = DataLoader(
+            self.test_dataset,
+            shuffle=False,
+            pin_memory=True,
+            batch_size=config.batch_size,
+            num_workers=config.num_workers,
+        )
+
+
+    def eval(self):
+        # runs the model on the test dataset
+        self.model.eval()
+        all_predictions = []
+        all_ground_truth = []
+        for batch in self.test_loader:
+            x,y = batch
+            test_preds, _ = self.model(x)
+            all_predictions.append(test_preds)  
+            all_ground_truth.append(y)
+        all_predictions = torch.cat(all_predictions)
+        all_ground_truth = torch.cat(all_ground_truth)
+        loss = mse_loss(all_predictions, all_ground_truth)
+        print(f'test loss = {loss}')
+        return loss
+
+
+    def run(self):
+        model, config = self.model, self.config
+
+        # setup the optimizer
+        self.optimizer = model.configure_optimizers(config)
+
+        
+
         model.train()
         self.iter_num = 0
         self.iter_time = time.time()
-        data_iter = iter(train_loader)
+        data_iter = iter(self.train_loader)
         while True:
 
             # fetch the next batch (x, y) and re-init iterator if needed
             try:
                 batch = next(data_iter)
             except StopIteration:
-                data_iter = iter(train_loader)
+                data_iter = iter(self.train_loader)
                 batch = next(data_iter)
             batch = [t.to(self.device) for t in batch]
             x, y = batch
@@ -91,8 +119,11 @@ class Trainer:
             self.iter_num += 1
             tnow = time.time()
             self.iter_dt = tnow - self.iter_time
+            print(f'iter {self.iter_num} done in {self.iter_dt}')
             self.iter_time = tnow
 
             # termination conditions
             if config.max_iters is not None and self.iter_num >= config.max_iters:
                 break
+
+        self.eval()

@@ -101,3 +101,7 @@ class CfgNode:
             # overwrite the attribute
             print("command line overwriting config attribute %s with %s" % (key, val))
             setattr(obj, leaf_key, val)
+
+
+def mse_loss(x, y):
+    return ((x-y)**2).mean()

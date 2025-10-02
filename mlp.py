@@ -3,10 +3,9 @@
 import torch
 import torch.nn as nn
 from base_model import base_model
+from utils import mse_loss
 
 
-def mse_loss(x, y):
-    return ((x-y)**2).mean()
 
 class model_ff(base_model):
 
@@ -24,7 +23,7 @@ class model_ff(base_model):
 
 		# if targets are provided, compute a loss too
 		loss = None
-		if target == None: 
+		if target != None: 
 			loss = mse_loss(x, target)
 
 		return x, loss

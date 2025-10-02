@@ -38,7 +38,11 @@ tconfig.merge_from_dict(trainer_config)
 train_dataset = CSVDataset(csv_file=general_config['train_table_path'], 
                            feature_cols = general_config['feature_cols'], 
                            target_col = general_config['target_col'])
-#test_dataset = CSVDataset(general_config['test_table_path'])
+test_dataset = CSVDataset(csv_file=general_config['test_table_path'], 
+                           feature_cols = general_config['feature_cols'], 
+                           target_col = general_config['target_col'])
 trainer = Trainer(config = tconfig, 
                   model=model, 
-                  train_dataset=train_dataset)
+                  train_dataset=train_dataset,
+                  test_dataset=test_dataset)
+trainer.run()
