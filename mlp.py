@@ -19,7 +19,7 @@ class model_ff(base_model):
 		x = self.linear(x)
 		x = self.relu(x)
 
-			
+				
 
 		# if targets are provided, compute a loss too
 		loss = None
