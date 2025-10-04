@@ -9,7 +9,8 @@ general = {
 trainer = {
         'device': 'auto',
         'num_workers': 4,
-        'max_iters': 10,
+        'max_iters': 10000,
+        'eval_iters': 100,
         'batch_size': 64,
         'learning_rate': 3e-4,
         'betas': (0.9, 0.95),

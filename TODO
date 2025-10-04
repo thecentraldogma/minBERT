@@ -1,0 +1,7 @@
+- Write a self attention class from scratch
+- Use it to write a transformer class
+- Use the transformer class to write a BERT class
+- Use the transformer class to write a GPT class
+- Write a tokenizer from scratch
+- Test BERT on a medium size text dataset to make sure it is learning
+- Test GPT on a medium size text dataset to make sure it is learning

@@ -25,6 +25,7 @@ class Trainer:
         C.betas = (0.9, 0.95)
         C.weight_decay = 0.1 # only applied on matmul weights
         C.grad_norm_clip = 1.0
+        C.eval_iters = 5
         return C
 
     def __init__(self, config, model, train_dataset, test_dataset):
@@ -33,7 +34,6 @@ class Trainer:
         self.optimizer = None
         self.train_dataset = train_dataset
         self.test_dataset = test_dataset
-        self.callbacks = defaultdict(list)
 
         # determine the device we'll train on
         if config.device == 'auto':
@@ -119,11 +119,13 @@ class Trainer:
             self.iter_num += 1
             tnow = time.time()
             self.iter_dt = tnow - self.iter_time
-            print(f'iter {self.iter_num} done in {self.iter_dt}')
+            #print(f'iter {self.iter_num} done in {self.iter_dt}')
             self.iter_time = tnow
 
             # termination conditions
             if config.max_iters is not None and self.iter_num >= config.max_iters:
                 break
 
-        self.eval()
+            # eval condition
+            if self.iter_num % config.eval_iters == 0:
+                self.eval()
