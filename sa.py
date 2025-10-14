@@ -1,7 +1,8 @@
 import torch
 import torch.nn as nn
 import numpy as np
-
+from torch.utils.data import Dataset, DataLoader
+import random
 
 class SelfAttentionHead(nn.Module):
 	# this class implements a single head of a self attention block
@@ -77,6 +78,84 @@ class TransformerBlock(nn.Module):
 		x = x + f
 		
 		return x
+
+
+
+class CopyShiftDataset(Dataset):
+    """
+    Each sample is a fixed-length sequence of token IDs:
+      input:  [x0, x1, x2, ..., x_{T-1}]
+      target: [BOS, x0, x1, ..., x_{T-2}]
+    BOS is token_id 0; random tokens are sampled from 1..(vocab_size-1)
+    """
+    def __init__(self, num_samples: int, T: int, vocab_size: int, seed: int = 42):
+        assert vocab_size >= 3, "Use vocab_size >= 3 so we have BOS(0) + >=2 tokens."
+        self.num_samples = num_samples
+        self.T = T
+        self.vocab_size = vocab_size
+        self.rng = random.Random(seed)
+
+    def __len__(self):
+        return self.num_samples
+
+    def __getitem__(self, idx):
+        # tokens 1..vocab_size-1 are "content" tokens; 0 is BOS
+        seq = [self.rng.randint(1, self.vocab_size-1) for _ in range(self.T)]
+        inp = torch.tensor(seq, dtype=torch.long)                         # (T,)
+        tgt = torch.tensor([0] + seq[:-1], dtype=torch.long)             # (T,)
+        return inp, tgt
+
+
+
+class TokenPositionalEmbedding(nn.Module):
+    def __init__(self, vocab_size: int, d_model: int, max_len: int):
+        super().__init__()
+        self.tok = nn.Embedding(vocab_size, d_model)
+        self.pos = nn.Embedding(max_len, d_model)
+
+    def forward(self, token_ids):  # token_ids: (B, T)
+        B, T = token_ids.shape
+        positions = torch.arange(T, device=token_ids.device).unsqueeze(0)  # (1, T)
+        x = self.tok(token_ids) + self.pos(positions)                      # (B, T, d_model)
+        return x
+
+
+
+class TinyTransformerLM(nn.Module):
+    """
+    Wraps:
+      - token+pos embeddings -> (B,T,d_model)
+      - N x TransformerBlock (your block)
+      - linear vocab head
+    """
+    def __init__(
+        self,
+        vocab_size: int,
+        d_model: int,
+        n_heads: int,
+        d_ff: int,
+        n_layers: int,
+        seq_len: int,
+        emb_p_drop: float = 0.0,
+        ff_p_drop: float = 0.1,
+        block_ctor=None,   # pass your TransformerBlock class
+    ):
+        super().__init__()
+        assert block_ctor is not None, "Pass your TransformerBlock class as block_ctor"
+        self.embed = TokenPositionalEmbedding(vocab_size, d_model, max_len=seq_len)
+        self.emb_drop = nn.Dropout(emb_p_drop)
+        self.blocks = nn.ModuleList([
+            block_ctor(n_heads=n_heads, seq_len=seq_len, d_model=d_model, sa_p_drop=ff_p_drop, ff_dim=d_ff, ff_p_drop=ff_p_drop)
+            for _ in range(n_layers)
+        ])
+        self.lm_head = nn.Linear(d_model, vocab_size, bias=False)
+
+    def forward(self, token_ids):  # (B, T) -> logits (B, T, vocab)
+        x = self.emb_drop(self.embed(token_ids))          # (B, T, d_model)
+        for blk in self.blocks:
+            x = blk(x)                                    # (B, T, d_model)
+        logits = self.lm_head(x)                          # (B, T, vocab)
+        return logits
 
 
 
