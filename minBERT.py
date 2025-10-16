@@ -36,8 +36,15 @@ class bert_test_dataset(Dataset):
     def __getitem__(self, idx):
         # return a tensor of length T that starts at a random integer between 0 and vocab_size-1 inclusize and wraps around if needed
         import random
-        i = random.randrange(self.vocab_size)
-        x = list(range(i, min(i + self.seq_len, self.vocab_size)))  + list(range(0, max(0, i + self.seq_len - self.vocab_size)))
+        elem = random.randrange(self.vocab_size)
+        x = []
+        while len(x) < self.seq_len:
+            # elements should be between 0...vocab_size-1
+            if elem > self.vocab_size - 1:
+                elem = 0
+            x.append(elem)
+            elem += 1
+
         return torch.tensor(x)
 
 
@@ -74,7 +81,6 @@ class minBERT(nn.Module):
 
 
 
-
 def test_bert_model(vocab_size, 
                     d_model, 
                     n_heads, 
@@ -84,7 +90,6 @@ def test_bert_model(vocab_size,
                     trx_p_drop, 
                     B=64, 
                     T=16,
-                    mask_id = -200,
                     mask_prob = 0.2,
                     lr = 3e-4,
                     num_samples=1000,
@@ -100,7 +105,7 @@ def test_bert_model(vocab_size,
             for inp, tgt, am in dloader:
                 inp, tgt = inp.to(device), tgt.to(device)         # (B,T)
                 logits = model(inp)                               # (B,T,V)
-                loss = loss_fn(logits.reshape(-1, vocab_size), tgt.reshape(-1))
+                loss = loss_fn(logits.reshape(-1, vocab_size+1), tgt.reshape(-1))
                 tot += loss.item() * inp.size(0)
                 cnt += inp.size(0)
         model.train()
@@ -109,7 +114,7 @@ def test_bert_model(vocab_size,
 
     
     # Create model, optimizer, loss function, dataset, dataloader
-    model = minBERT(vocab_size=vocab_size,
+    model = minBERT(vocab_size=vocab_size+1,
         d_model=d_model,
         n_heads=n_heads,
         d_ff=d_ff,
@@ -119,20 +124,20 @@ def test_bert_model(vocab_size,
         trx_p_drop=trx_p_drop)
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
-    loss_func = nn.CrossEntropyLoss(ignore_index = -100)
+    loss_fn = nn.CrossEntropyLoss(ignore_index = -100)
     train_dataset = bert_test_dataset(T, vocab_size, num_samples)
     val_dataset = bert_test_dataset(T, vocab_size, num_samples)
     train_dataloader = DataLoader(dataset=train_dataset, 
                             batch_size=B, 
                             shuffle=True, 
                             drop_last=True,
-                            collate_fn=lambda batch: bert_collate_fn(batch, mask_id=mask_id, mask_prob=mask_prob)
+                            collate_fn=lambda batch: bert_collate_fn(batch, mask_id=vocab_size, mask_prob=mask_prob)
                             )
     val_dataloader = DataLoader(dataset=val_dataset, 
                             batch_size=B, 
                             shuffle=True, 
                             drop_last=True,
-                            collate_fn=lambda batch: bert_collate_fn(batch, mask_id=mask_id, mask_prob=mask_prob)
+                            collate_fn=lambda batch: bert_collate_fn(batch, mask_id=vocab_size, mask_prob=mask_prob)
                             )
 
 
@@ -145,16 +150,16 @@ def test_bert_model(vocab_size,
         try:
             x, y, am = next(it)
         except StopIteration:
-            it = iter(train_dl)
+            it = iter(train_dataloader)
             x, y, am = next(it)
 
         x, y, am = x.to(device), y.to(device), am.to(device)
         logits = model(x)
-        loss = loss_fn(logits.reshape(-1, vocab_size), y)
-        opt.zero_grad(set_to_none=True)
+        loss = loss_fn(logits.reshape(-1, vocab_size+1), y.reshape(-1))
+        optimizer.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        opt.step()
+        optimizer.step()
 
         if (step % 50) == 0:
             val_loss = evaluate(val_dataloader)
