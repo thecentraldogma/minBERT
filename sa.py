@@ -6,20 +6,29 @@ import random
 
 class SelfAttentionHead(nn.Module):
 	# this class implements a single head of a self attention block
-	def __init__(self, seq_len, d_model, d_k, d_v):
+	def __init__(self, seq_len, d_model, d_k, d_v, p_drop, causal):
 		super().__init__()
 		self.value_network = nn.Linear(d_model, d_v)
 		self.query_network = nn.Linear(d_model, d_k)
 		self.key_network = nn.Linear(d_model, d_k)
 		self.d_k = d_k
 		self.softmax = nn.Softmax(dim=-1)
+		self.causal = causal
+		self.dropout = nn.Dropout(p_drop)
 
 	def forward(self, x):
 		# x has shape (B, T, d_model)
 		values = self.value_network(x) # (B, T, d_v)
 		queries = self.query_network(x) # (B, T, d_k)
 		keys = self.key_network(x) # (B, T, d_k)
-		attention_weights = self.softmax(queries @ keys.transpose(-2, -1)/np.sqrt(self.d_k)) # (batch, T, T)
+		scores = queries @ keys.transpose(-2, -1)/np.sqrt(self.d_k) # (batch, T, T)
+		if self.causal:
+			T = scores.size(-1)
+			mask = torch.triu(torch.ones(T, T, device = scores.device), diagonal = 1).bool()
+			scores = scores.masked_fill(mask, float('-inf'))
+
+		attention_weights = self.softmax(scores) # (batch, T, T)
+		attention_weights = self.dropout(attention_weights)
 		result = attention_weights @ values # (B, T, d_v)
 		return result
 
@@ -31,30 +40,28 @@ class SelfAttentionBlock(nn.Module):
 	# seq_len: a sequence of tokens is fed at the same time to the module, rather than one by one
 	# model_dim: the embedding dimensionality that is used to reprent each token
 	# the output consists of the same dimensionality as the input: (batch, seq_len, model_dim)
-	def __init__(self, n_heads, seq_len, d_model, p_drop):
+	def __init__(self, n_heads, seq_len, d_model, p_drop, causal):
 		super().__init__()
 		assert d_model % n_heads == 0, 'model_dim should be a multiple of n_heads'
 		d_k = d_model // n_heads
 		d_v = d_model // n_heads
-		self.heads = [SelfAttentionHead(seq_len, d_model, d_k, d_v) for _ in range(n_heads)]
+		self.heads = [SelfAttentionHead(seq_len, d_model, d_k, d_v, p_drop, causal) for _ in range(n_heads)]
 		self.linear = nn.Linear(d_model, d_model)
-		self.dropout = nn.Dropout(p=p_drop)
 
 
 	def forward(self, x):
 		# x has shape (B, T, d_model)
 		head_outputs = [head(x) for head in self.heads]
-		concatenated_output = torch.cat(head_outputs, dim = -1)
-		out = self.dropout(concatenated_output)  # (B, T, d_model)
+		out = torch.cat(head_outputs, dim = -1)
 
 		return out
 
 
 class TransformerBlock(nn.Module): 
 	# this class implements a transformer, using the selfAttentionBlock
-	def __init__(self, n_heads, seq_len, d_model, sa_p_drop, ff_dim, ff_p_drop):
+	def __init__(self, n_heads, seq_len, d_model, sa_p_drop, ff_dim, ff_p_drop, causal = False):
 		super().__init__()
-		self.self_attention = SelfAttentionBlock(n_heads=n_heads, seq_len=seq_len, d_model=d_model, p_drop=sa_p_drop)
+		self.self_attention = SelfAttentionBlock(n_heads=n_heads, seq_len=seq_len, d_model=d_model, p_drop=sa_p_drop, causal = causal)
 		self.layernorm_sa = nn.LayerNorm(d_model)
 		self.layernorm_ff = nn.LayerNorm(d_model)
 
@@ -78,6 +85,34 @@ class TransformerBlock(nn.Module):
 		x = x + f
 		
 		return x
+
+
+
+class IntegerSequenceLoopDataset(Dataset):
+    # this is a Dataset class that generates token id sequences
+    def __init__(self, seq_len, vocab_size, num_samples): 
+        super().__init__()
+        self.seq_len = seq_len
+        self.vocab_size = vocab_size
+        self.num_samples = num_samples
+
+    def __len__(self):
+        return self.num_samples
+
+
+    def __getitem__(self, idx):
+        # return a tensor of length T that starts at a random integer between 0 and vocab_size-1 inclusize and wraps around if needed
+        import random
+        elem = random.randrange(self.vocab_size)
+        x = []
+        while len(x) < self.seq_len:
+            # elements should be between 0...vocab_size-1
+            if elem > self.vocab_size - 1:
+                elem = 0
+            x.append(elem)
+            elem += 1
+
+        return torch.tensor(x)
 
 
 

@@ -1,33 +1,32 @@
+#minGPT
+
 import torch
 from sa import TokenPositionalEmbedding, TransformerBlock, IntegerSequenceLoopDataset
 from torch.utils.data import Dataset, DataLoader
 import torch.nn as nn
 
+# basic setup is similar to minBERT
+# the main differences are: 
+# 1. Collate function does not do MLM anymore. Instead we set the labels to be the same as the input sequence except shifted right by one position. Last position in labels is set to -100. 
+# 2. We now use a causal attention mask because we want to predict the next token, so given an input sequence token i can only attend to prior N tokens. 
+# 3. We need a generate function, that takes in a given sequence and predicts the next token
+# 4. The test harness can be similar to that of BERT: i.e. the dataset class generates sequences of integers from 0 to vocab_size-1 and wraps around if needed, upto a max of seq_len tokens. 
 
 
-def bert_collate_fn(input_ids, mask_id, mask_prob = 0.15):
-    # input is a list of items returned by the _get_item_ method of the Dataset class, length of list is batch_size
-    # output is tensor X containing enough elements for one batch, with the mask_id applied p% of the time. 
-    
-    input_ids = torch.stack(input_ids, dim = 0) # (B, T)
-    labels = torch.full_like(input_ids, -100)
-
-    # change the input_ids p% of the time to mask_id
-    probs = torch.rand_like(input_ids.float())
-    mask_positions = probs < mask_prob
-    labels[mask_positions] = input_ids[mask_positions]
-    input_ids[mask_positions] = mask_id
-    attn_mask = torch.ones_like(input_ids)
-    return input_ids, labels, attn_mask
+def gpt_collate_fn(input_ids):
+	input_ids = torch.stack(input_ids, dim = 0) # (B, T) # collecting tensors into a batch is the main job of the default collate fn
+	labels = torch.full_like(input_ids, -100)
+	labels[:, :-1] = input_ids[:, 1:]
+	return input_ids, labels
 
 
 
 
-class minBERT(nn.Module):
+class MinGPT(nn.Module):
     def __init__(self,
         vocab_size: int,
         d_model: int,
-        n_heads: int,
+        n_heads: int,	
         d_ff: int,
         n_layers: int,
         seq_len: int,
@@ -37,7 +36,7 @@ class minBERT(nn.Module):
         self.embed = TokenPositionalEmbedding(vocab_size = vocab_size, d_model = d_model, max_len = seq_len)
         self.dropout = nn.Dropout(emb_p_drop)
         self.blocks = nn.ModuleList([
-            TransformerBlock(n_heads=n_heads, seq_len=seq_len, d_model=d_model, sa_p_drop=trx_p_drop, ff_dim=d_ff, ff_p_drop=trx_p_drop)
+            TransformerBlock(n_heads=n_heads, seq_len=seq_len, d_model=d_model, sa_p_drop=trx_p_drop, ff_dim=d_ff, ff_p_drop=trx_p_drop, causal=True)
             for _ in range(n_layers)
         ])
         self.norm = nn.LayerNorm(d_model)
@@ -55,7 +54,34 @@ class minBERT(nn.Module):
 
 
 
-def test_bert_model(vocab_size, 
+@torch.no_grad()
+def generate(model, idx, max_new_tokens, temperature=1.0, top_k=None):
+    """
+    Generate new tokens from a trained autoregressive model.
+
+    Args:
+        model: trained GPT-like model
+        idx: (B=1, T) tensor of token indices (the prompt)
+        max_new_tokens: how many tokens to generate
+        temperature: scaling factor for sampling randomness (>1 = more random, <1 = more greedy)
+        top_k: if set, only keep top_k logits for sampling (nucleus/top-k sampling)
+
+    Returns:
+        (B=1, T + max_new_tokens) tensor of token indices
+    """
+
+    for i in range(max_new_tokens):
+        out = model(idx)
+        new_logits = out[:, -1, :]/temperature
+        probs = torch.softmax(new_logits, dim=-1)
+        next_token = torch.multinomial(probs, num_samples=1) 
+        idx = torch.cat((idx, next_token), dim=1)
+    return idx
+
+
+    
+
+def test_gpt_model(vocab_size, 
                     d_model, 
                     n_heads, 
                     d_ff, 
@@ -64,7 +90,6 @@ def test_bert_model(vocab_size,
                     trx_p_drop, 
                     B=64, 
                     T=16,
-                    mask_prob = 0.2,
                     lr = 3e-4,
                     num_samples=1000,
                     n_steps=300,
@@ -76,10 +101,10 @@ def test_bert_model(vocab_size,
         model.eval()
         tot, cnt = 0.0, 0
         with torch.no_grad():
-            for inp, tgt, am in dloader:
+            for inp, tgt in dloader:
                 inp, tgt = inp.to(device), tgt.to(device)         # (B,T)
                 logits = model(inp)                               # (B,T,V)
-                loss = loss_fn(logits.reshape(-1, vocab_size+1), tgt.reshape(-1))
+                loss = loss_fn(logits.reshape(-1, vocab_size), tgt.reshape(-1))
                 tot += loss.item() * inp.size(0)
                 cnt += inp.size(0)
         model.train()
@@ -88,7 +113,7 @@ def test_bert_model(vocab_size,
 
     
     # Create model, optimizer, loss function, dataset, dataloader
-    model = minBERT(vocab_size=vocab_size+1,
+    model = MinGPT(vocab_size=vocab_size,
         d_model=d_model,
         n_heads=n_heads,
         d_ff=d_ff,
@@ -105,13 +130,13 @@ def test_bert_model(vocab_size,
                             batch_size=B, 
                             shuffle=True, 
                             drop_last=True,
-                            collate_fn=lambda batch: bert_collate_fn(batch, mask_id=vocab_size, mask_prob=mask_prob)
+                            collate_fn=lambda batch: gpt_collate_fn(batch)
                             )
     val_dataloader = DataLoader(dataset=val_dataset, 
                             batch_size=B, 
                             shuffle=True, 
                             drop_last=True,
-                            collate_fn=lambda batch: bert_collate_fn(batch, mask_id=vocab_size, mask_prob=mask_prob)
+                            collate_fn=lambda batch: gpt_collate_fn(batch)
                             )
 
 
@@ -122,14 +147,14 @@ def test_bert_model(vocab_size,
     best_val = float("inf")
     while step < n_steps:
         try:
-            x, y, am = next(it)
+            x, y = next(it)
         except StopIteration:
             it = iter(train_dataloader)
-            x, y, am = next(it)
+            x, y = next(it)
 
-        x, y, am = x.to(device), y.to(device), am.to(device)
+        x, y = x.to(device), y.to(device)
         logits = model(x)
-        loss = loss_fn(logits.reshape(-1, vocab_size+1), y.reshape(-1))
+        loss = loss_fn(logits.reshape(-1, vocab_size), y.reshape(-1))
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -141,3 +166,21 @@ def test_bert_model(vocab_size,
             print(f"step {step:4d} | train_loss {loss.item():.4f} | val_loss {val_loss:.4f}")
 
         step += 1
+
+    model.eval()
+    with torch.no_grad():
+        inp, tgt = next(iter(val_dataloader))
+        inp = inp.to(device)
+        logits = model(inp)                                       # (B,T,V)
+        pred = logits.argmax(dim=-1).cpu()                        # (B,T)
+        print("\nSample predictions (first 3 rows):")
+        for i in range(min(10, inp.size(0))):
+            print("inp :", inp[i].tolist())
+            #print("tgt :", ([0] + inp[i].tolist()[:-1]))
+            print("tgt :", tgt[i].tolist())
+            print("pred:", pred[i].tolist())
+            print("---")
+
+
+    return model
+

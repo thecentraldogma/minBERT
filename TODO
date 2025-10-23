@@ -1,7 +1,10 @@
-- Write a self attention class from scratch
-- Use it to write a transformer class
-- Use the transformer class to write a BERT class
+- Write a self attention class from scratch: done
+- Use it to write a transformer class: done
+- Use the transformer class to write a BERT class: done
 - Use the transformer class to write a GPT class
 - Write a tokenizer from scratch
+- Include handling of padding in both BERT and GPT
 - Test BERT on a medium size text dataset to make sure it is learning
 - Test GPT on a medium size text dataset to make sure it is learning
+- Test GPT on a real text dataset like shakespeare and then generate from it. 
+- Examine how to apply BERT to protein language models. 
