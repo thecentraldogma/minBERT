@@ -1,10 +1,15 @@
 - Write a self attention class from scratch: done
 - Use it to write a transformer class: done
 - Use the transformer class to write a BERT class: done
-- Use the transformer class to write a GPT class
+- Use the transformer class to write a GPT class: done
+
 - Write a tokenizer from scratch
 - Include handling of padding in both BERT and GPT
 - Test BERT on a medium size text dataset to make sure it is learning
 - Test GPT on a medium size text dataset to make sure it is learning
 - Test GPT on a real text dataset like shakespeare and then generate from it. 
 - Examine how to apply BERT to protein language models. 
+- Implement nano chat after reading karpathy's code
+- How to evaluate an LLM - bert style, and gpt style
+- Why are bert style models called encoder only and gpt style models called decoder only? 
+- 
